@@ -36,7 +36,7 @@ void clear_console_except_last_line() {
 
     // 保存当前光标位置
     COORD current_cursor_position = csbi.dwCursorPosition;
-
+    current_cursor_position.Y = current_cursor_position.Y - 1;
     // 将光标移动到控制台第一行
     COORD top_left_coord;
     top_left_coord.X = 0;

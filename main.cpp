@@ -1,11 +1,18 @@
-﻿#include <windows.h>
+﻿#include <future>
+#include <windows.h>
 #include <tlhelp32.h>
 #include <iostream>
 #include <thread>
+#include <mutex>
+#include <conio.h>
 
 #include "printer.h"
 
 printer p;
+
+std::mutex mtx;
+std::condition_variable cv;
+bool monitor_finished = false;
 
 /**
  * \brief Check if a process is running by its PID
@@ -85,6 +92,10 @@ void monitor_process(DWORD process_id) {
 	}
 	clear_last_line();
 	std::wcout << L"Process " << process_id << L" stopped and ran for " << cnt << L"s." << std::endl;
+
+	std::lock_guard<std::mutex> lock(mtx);
+	monitor_finished = true;
+	cv.notify_one();
 }
 
 bool kill_process(DWORD processId) {
@@ -98,15 +109,22 @@ bool kill_process(DWORD processId) {
 	return result != 0;
 }
 
-void input_func(DWORD process_id) {
+void input_func(DWORD process_id, std::future<void> exit_signal) {
 	std::wstring input;
-	std::wcout << "Enter exit/e to exit:";
-	while (true) {
-		std::wcin >> input;
-		if (input == L"exit" || input == L"e") {
-			kill_process(process_id);
+
+	while (is_process_running(process_id)) {
+		if (_kbhit()) {
+			std::wcin >> input;
+			if (input == L"exit" || input == L"e") {
+				kill_process(process_id);
+				break;
+			}
+		}
+		// 检查是否收到了退出信号
+		if (exit_signal.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
 			break;
 		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
 	}
 }
 
@@ -119,11 +137,15 @@ int main() {
 	//p.add_and_print(L"Process id: " + std::to_wstring(process_id));
 
 	std::wcout << "\n";
+	// 应该设置为如果monitor_thread线程结束，那么input_thread也结束
+	std::promise<void> exit_signal;
+	auto future = exit_signal.get_future();
 	std::thread monitor_thread(monitor_process, process_id);
-	std::thread input_thread(input_func, process_id);
+	std::thread input_thread(input_func, process_id, std::move(future));
 	if (monitor_thread.joinable()) {
 		monitor_thread.join();
 	}
+	exit_signal.set_value(); // 发送信号给input_thread，表示可以退出了
 	if (input_thread.joinable()) {
 		input_thread.join();
 	}
